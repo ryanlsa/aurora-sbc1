@@ -124,11 +124,46 @@ if('serviceWorker' in navigator && location.protocol==='https:'){navigator.servi
       return [noun==='league'?'maxLeague':noun==='club'?'maxClub':'maxNation',reverse ? m[1] : m[2]];
     }
   }
+  function interpret(line) {
+    const exact = rule(line);
+    if (exact) return exact;
+    const aliases = {chem:'chemistry', kem:'chemistry', rated:'rating', overall:'rating',
+      countries:'nations', country:'nation', leagues:'league', clubs:'club', nations:'nation',
+      nationalities:'nation', nationality:'nation', leeks:'league', leegs:'league', maximum:'max', minimum:'min'};
+    const keywords = ['chemistry','rating','league','nation','club','maximum','minimum','exactly','players','same'];
+    function close(a,b) {
+      if (a.length<4 || Math.abs(a.length-b.length)>1) return false;
+      let row=Array.from({length:b.length+1},(_,i)=>i);
+      for (const ch of a) {
+        const next=[row[0]+1];
+        for(let j=0;j<b.length;j++) next.push(Math.min(next[j]+1,row[j+1]+1,row[j]+(ch!==b[j])));
+        row=next;
+      }
+      return row[b.length]<=1;
+    }
+    const s=numbers(line).replace(/[a-z]+/g,w=>{
+      const hits=keywords.filter(k=>close(w,k));
+      const key=aliases[w] || (hits.length===1?hits[0]:w);
+      return aliases[key] || key;
+    });
+    const values=s.match(/\b\d+\b/g);
+    if (!values || values.length!==1 || /\b(not|except|between|under|over|less than|more than)\b/.test(s.replace(/no more than/g,'max'))) return;
+    const fields=['rating','chemistry','league','club','nation'].filter(k=>s.split(/\W+/).includes(k));
+    if(fields.length!==1) return;
+    const field=fields[0], cap=/\b(max|at most|no more than|up to|limit|cap)\b/.test(s);
+    const floor=/\b(min|at least)\b/.test(s), same=/\b(same|per|each|any single)\b/.test(s);
+    let id;
+    if (field==='rating' || field==='chemistry') {
+      if (!cap && !same) id=field==='rating'?'rating':'chem';
+    } else if (same && !floor) id={league:'maxLeague',nation:'maxNation',club:'maxClub'}[field];
+    else if (!cap && !floor && !same && field!=='club') id=field==='league'?'leagues':'nations';
+    if(id) return [id,values[0],values[0]+' (suggested)'];
+  }
   function review() {
     preview.replaceChildren();
     const changes = new Map();
     for (const line of input.value.split(/[,.;!?\n]+|\band\b/i).map(s=>s.trim()).filter(Boolean)) {
-      const match = rule(line), item = document.createElement('li');
+      const match = interpret(line), item = document.createElement('li');
       if (match && (match[0]==='formation' || (+match[1]>=+$(match[0]).min && +match[1]<=+$(match[0]).max))) {
         changes.set(match[0],match[1]);
         item.textContent = labels[match[0]]+' → '+(match[2]||match[1]);

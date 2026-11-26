@@ -1,0 +1,3 @@
+Aurora SBC Lab – mobile PWA
+
+Extract this ZIP. Upload index.html, manifest.webmanifest, sw.js and both PNG icons to the root of a GitHub repository. In Settings > Pages choose Deploy from a branch, main / (root), then Save. Open the published HTTPS URL on your phone. Android Chrome: menu > Install app or Add to Home screen. iPhone Safari: Share > Add to Home Screen. Open once online and wait for Offline cache ready before going offline. Imported CSV and settings are saved locally on the device; live market prices and external player links require internet. Chemistry is approximate and the solver is heuristic, not globally optimal.

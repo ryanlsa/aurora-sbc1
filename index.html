@@ -124,6 +124,18 @@ function solve({players,slots,edges,req,effort,seed,checkpoint,inspect}){
    [['maxClub','c'],['maxLeague','l'],['maxNation','n']].some(([cap,key])=>Number.isFinite(req[cap])&&req[cap]*available(key)<11);
  if(impossible){postMessage({type:'error',message:'The eligible pool cannot meet the requested rating or club, league and nation limits.'});return;}
  if(!distinctLineupPossible()){postMessage({type:'error',message:'These slots cannot be filled by 11 distinct eligible players.'});return;}
+ // Preserve the price-sorted candidate order while reusing common link searches.
+ const membership=pools.map(pool=>new Set(pool));
+ const linkedCache=pools.map(()=>new Map());
+ function linkedPool(slot,index){
+   const current=players[index], cache=linkedCache[slot];
+   const key=current.n*leagueCount.length+current.l;
+   if(cache.has(key))return cache.get(key);
+   const matches=pools[slot].filter(i=>players[i].n===current.n||players[i].l===current.l);
+   if(cache.size>=128)cache.delete(cache.keys().next().value);
+   cache.set(key,matches);return matches;
+ }
+ function pickPrefix(pool,count){return pool[Math.floor(rnd()*Math.min(pool.length,count))];}
  const variants=checkpoint?.variants||{};
  let nearest=checkpoint?.nearest||null;
  let best=null,bestCost=Infinity,near=null,nearScore=Infinity,done=0;const steps=10000;
@@ -132,8 +144,8 @@ function solve({players,slots,edges,req,effort,seed,checkpoint,inspect}){
    bestCost=bestCost ?? Infinity;
    nearScore=nearScore ?? Infinity;
  }
- for(let run=done/steps;done<effort;run++){let a=best&&run%3!==0?best.slice():pools.map(p=>pick(p.slice(0,Math.min(p.length,Math.max(10,Math.ceil(p.length*.65))))));let cur=evalSquad(a);const penalty=run%4===0?3500:run%4===1?7000:run%4===2?15000:10000;const score=e=>e.total+penalty*e.violation;let sc=score(cur);
- for(let k=0;k<steps&&done<effort;k++,done++){let t=Math.max(100,22000*Math.pow(.0045,k/steps));let b=a.slice(),i=Math.floor(rnd()*11);if(rnd()<.18){let j=Math.floor(rnd()*11);if(pools[i].includes(a[j])&&pools[j].includes(a[i])){b[i]=a[j];b[j]=a[i];}else b[i]=pick(pools[i]);}else{let pool=pools[i],mode=rnd();if(mode<.35){let q=pool.filter(x=>players[x].nation===players[a[i]].nation||players[x].league===players[a[i]].league);b[i]=pick(q.length?q:pool);}else if(mode<.65){b[i]=pick(pool.slice(0,Math.max(1,Math.ceil(pool.length*.55))));}else b[i]=pick(pool);if(rnd()<.07){let j=Math.floor(rnd()*11);b[j]=pick(pools[j]);}}
+ for(let run=done/steps;done<effort;run++){let a=best&&run%3!==0?best.slice():pools.map(p=>pickPrefix(p,Math.max(10,Math.ceil(p.length*.65))));let cur=evalSquad(a);const penalty=run%4===0?3500:run%4===1?7000:run%4===2?15000:10000;const score=e=>e.total+penalty*e.violation;let sc=score(cur);
+ for(let k=0;k<steps&&done<effort;k++,done++){let t=Math.max(100,22000*Math.pow(.0045,k/steps));let b=a.slice(),i=Math.floor(rnd()*11);if(rnd()<.18){let j=Math.floor(rnd()*11);if(membership[i].has(a[j])&&membership[j].has(a[i])){b[i]=a[j];b[j]=a[i];}else b[i]=pick(pools[i]);}else{let pool=pools[i],mode=rnd();if(mode<.35){let q=linkedPool(i,a[i]);b[i]=pick(q.length?q:pool);}else if(mode<.65){b[i]=pickPrefix(pool,Math.max(1,Math.ceil(pool.length*.55)));}else b[i]=pick(pool);if(rnd()<.07){let j=Math.floor(rnd()*11);b[j]=pick(pools[j]);}}
  let e=evalSquad(b),s=score(e);if(s<sc||rnd()<Math.exp((sc-s)/t)){a=b;cur=e;sc=s;}if(e.valid){
    for(const [key,value] of [['market',e.cost],['fewest',e.items],['listed',e.unlisted]]){
      const old=variants[key];if(!old||value<old.value||(value===old.value&&e.total<old.total))variants[key]={value,total:e.total,a:b.slice()};
@@ -283,9 +295,12 @@ function persistSearch(){
    else localStorage.removeItem(progressKey);
  }catch(error){$('resultNote').textContent='Device storage unavailable. Refreshing may lose this search.';}
 }
+let speedStart=0,speedOffset=0;
 function updateCounter(done,effort){
  if(effort===-1)$('progress').removeAttribute('value');else $('progress').value=done/effort;
- $('count').textContent=fmt(done)+' candidates';
+ const seconds=(performance.now()-speedStart)/1000;
+ const rate=worker&&seconds>=0.1&&done>speedOffset?' · '+fmt(Math.round((done-speedOffset)/seconds))+' candidates/s':'';
+ $('count').textContent=fmt(done)+' candidates'+rate;
 }
 function clearResult(){$('workbench').replaceChildren();$('shareLink').disabled=$('reserve').disabled=true;if(searchSave){searchSave=null;persistSearch();}best=null;updateCounter(0,1);$('shareFallback').hidden=true;for(let id of ['cost','outRating','outChem'])$(id).textContent='—';$('results').innerHTML='';$('checks').innerHTML='';$('shareSquad').disabled=$('download').disabled=$('copy').disabled=true;$('resultNote').textContent='No qualifying squad yet.';let f=formations[$('formation').value];try{renderPitch(f,readEdges(f))}catch{renderPitch(f,[])}}
 function setFormation(){$('edges').value=formations[$('formation').value].edges;clearResult();}
@@ -322,7 +337,7 @@ function start(resume=false){resume=resume===true;try{let f=formations[$('format
    if(req.minClub===11)players=fromClub;
  }if(!players.length)throw Error('No eligible priced cards.');if(!resume)clearResult();active={f,edges,req,formation:$('formation').selectedOptions[0].textContent,preset:$('preset').selectedOptions[0].textContent,listed:$('listed').checked};let effort=+$('effort').value;
  if(!resume){saveLocal();searchSave={active,effort,seed:Date.now(),checkpoint:null,done:0,running:true};persistSearch();}
- let blob=new Blob([$('linkRule').textContent,$('engine').textContent],{type:'text/javascript'}),url=URL.createObjectURL(blob);worker=new Worker(url);URL.revokeObjectURL(url);let token=++runToken;$('solve').disabled=true;$('stop').disabled=false;for(let el of document.querySelectorAll('aside input,aside select,aside textarea'))el.disabled=true;updateCounter(searchSave.done,effort);$('status').textContent=`Searching ${players.length} eligible cards…`;worker.onmessage=e=>{if(token!==runToken)return;let m=e.data;if(m.type==='checkpoint'){if(m.closest)searchSave.closest=m.closest;searchSave.checkpoint=m.checkpoint;searchSave.done=m.checkpoint.done;updateCounter(searchSave.done,effort);persistSearch();}else if(m.type==='best'){if(best?.metrics.valid&&(best.metrics.total??best.metrics.cost)<=m.metrics.total)return;showResult(m);if(effort===-1){searchSave.done=m.done+1;refreshBench();updateCounter(searchSave.done,effort);$('progress').value=1;finish('First qualifying squad found.');return;}persistSearch();$('status').textContent='New best: '+fmt(m.metrics.total??m.metrics.cost)+' coins';}else if(m.type==='progress'){if(m.closest)searchSave.closest=m.closest; updateCounter(m.done,effort);if(!best&&m.near)$('status').textContent=`Searching… nearest rating ${m.near.rating}, chemistry ${m.near.chem}, leagues ${m.near.leagues}, nations ${m.near.nations}.`;}else if(m.type==='done'){searchSave.choices={cheapest:best,...m.choices};if(!best&&m.nearest)showResult(m.nearest);searchSave.done=m.done;$('progress').value=1;$('count').textContent=fmt(m.done)+' candidates';finish(best?.metrics.valid?'Search complete. Best qualifying squad retained.':best?'Closest squad shown. Review the failed requirements.':'No qualifying squad found.');refreshBench();}else if(m.type==='error')finish(m.message);};worker.onerror=e=>finish('Worker error: '+e.message);worker.postMessage({players,slots:f.slots,edges,req,effort,seed:searchSave.seed,checkpoint:searchSave.checkpoint});}catch(e){finish(e.message)}}
+ let blob=new Blob([$('linkRule').textContent,$('engine').textContent],{type:'text/javascript'}),url=URL.createObjectURL(blob);worker=new Worker(url);URL.revokeObjectURL(url);let token=++runToken;$('solve').disabled=true;$('stop').disabled=false;for(let el of document.querySelectorAll('aside input,aside select,aside textarea'))el.disabled=true;speedStart=performance.now();speedOffset=searchSave.done;updateCounter(searchSave.done,effort);$('status').textContent=`Searching ${players.length} eligible cards…`;worker.onmessage=e=>{if(token!==runToken)return;let m=e.data;if(m.type==='checkpoint'){if(m.closest)searchSave.closest=m.closest;searchSave.checkpoint=m.checkpoint;searchSave.done=m.checkpoint.done;updateCounter(searchSave.done,effort);persistSearch();}else if(m.type==='best'){if(best?.metrics.valid&&(best.metrics.total??best.metrics.cost)<=m.metrics.total)return;showResult(m);if(effort===-1){searchSave.done=m.done+1;refreshBench();updateCounter(searchSave.done,effort);$('progress').value=1;finish('First qualifying squad found.');return;}persistSearch();$('status').textContent='New best: '+fmt(m.metrics.total??m.metrics.cost)+' coins';}else if(m.type==='progress'){if(m.closest)searchSave.closest=m.closest; updateCounter(m.done,effort);if(!best&&m.near)$('status').textContent=`Searching… nearest rating ${m.near.rating}, chemistry ${m.near.chem}, leagues ${m.near.leagues}, nations ${m.near.nations}.`;}else if(m.type==='done'){searchSave.choices={cheapest:best,...m.choices};if(!best&&m.nearest)showResult(m.nearest);searchSave.done=m.done;$('progress').value=1;updateCounter(m.done,effort);finish(best?.metrics.valid?'Search complete. Best qualifying squad retained.':best?'Closest squad shown. Review the failed requirements.':'No qualifying squad found.');refreshBench();}else if(m.type==='error')finish(m.message);};worker.onerror=e=>finish('Worker error: '+e.message);worker.postMessage({players,slots:f.slots,edges,req,effort,seed:searchSave.seed,checkpoint:searchSave.checkpoint});}catch(e){finish(e.message)}}
 function solutionText(result, search) {
  const {squad, metrics} = result;
  const {formation, preset, req, f} = search;

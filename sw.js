@@ -1,4 +1,4 @@
-const CACHE='aurora-sbc-v19';
+const CACHE='aurora-sbc-v20';
 const CORE=['./','./index.html','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
 const OCR=['ocr.min.js','worker.min.js','reader-core.wasm.js','eng.traineddata.gz'].map(file=>new URL(file,self.registration.scope).href);
 self.addEventListener('install',event=>event.waitUntil((async()=>{
